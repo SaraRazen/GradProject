@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+
 app = FastAPI(
     title="FormAI Rehab API",
     description="Backend API for the FormAI Rehab rehabilitation monitoring platform",
@@ -7,8 +8,15 @@ app = FastAPI(
 )
 
 
-@app.get("/")
+@app.get("/", tags=["Health"])
 async def root():
     return {
         "message": "FormAI Rehab API is running"
+    }
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    return {
+        "status": "healthy"
     }
