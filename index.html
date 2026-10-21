@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans, sans-serif); background: var(--color-background-tertiary, #f5f5f5); }
+
+#app { max-width: 900px; margin: 0 auto; padding: 1rem; }
+
+#header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+#header h1 { font-size: 18px; font-weight: 500; color: var(--color-text-primary); }
+#status-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; margin-right: 6px; }
+#status-text { font-size: 13px; color: var(--color-text-secondary); }
+
+#main { display: grid; grid-template-columns: 1fr 260px; gap: 12px; }
+
+#video-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg, 12px); overflow: hidden; position: relative; }
+#video-wrap { position: relative; width: 100%; aspect-ratio: 4/3; background: #111; }
+video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+
+#hud { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); border-radius: 8px; padding: 8px 14px; color: #fff; }
+#hud-reps { font-size: 36px; font-weight: 500; line-height: 1; }
+#hud-label { font-size: 11px; color: #aaa; margin-top: 2px; }
+#hud-angle { font-size: 13px; color: #7cf; margin-top: 4px; }
+#hud-phase { font-size: 11px; margin-top: 2px; }
+
+#sidebar { display: flex; flex-direction: column; gap: 12px; }
+
+.card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg, 12px); padding: 1rem; }
+.card-title { font-size: 13px; font-weight: 500; color: var(--color-text-secondary); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+#exercise-select, #label-select, #person-id { width: 100%; padding: 8px; border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md, 8px); background: var(--color-background-secondary); color: var(--color-text-primary); font-size: 14px; }
+#label-select, #person-id { margin-bottom: 8px; }
+
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 0.5px solid var(--color-border-tertiary); font-size: 13px; }
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: var(--color-text-secondary); }
+.stat-value { font-weight: 500; color: var(--color-text-primary); }
+
+#btn-start { width: 100%; padding: 10px; background: #1a6ef5; color: #fff; border: none; border-radius: var(--border-radius-md, 8px); font-size: 14px; cursor: pointer; font-weight: 500; }
+#btn-start:hover { background: #1459cc; }
+#btn-reset { width: 100%; padding: 8px; background: transparent; color: var(--color-text-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md, 8px); font-size: 13px; cursor: pointer; margin-top: 6px; }
+#btn-reset:hover { background: var(--color-background-secondary); }
+#btn-save { width: 100%; padding: 10px; margin-top: 8px; background: #16a34a; color: #fff; border: none; border-radius: var(--border-radius-md, 8px); font-size: 14px; cursor: pointer; font-weight: 500; }
+#btn-save:hover { background: #12853c; }
+
+#angle-bar-wrap { margin-top: 8px; }
+#angle-bar-bg { width: 100%; height: 8px; background: var(--color-background-secondary); border-radius: 4px; overflow: hidden; }
+#angle-bar { height: 100%; width: 0%; background: #1a6ef5; border-radius: 4px; transition: width 0.08s; }
+.bar-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--color-text-secondary); margin-top: 4px; }
+
+#log { max-height: 120px; overflow-y: auto; font-size: 12px; color: var(--color-text-secondary); }
+.log-entry { padding: 3px 0; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.log-entry.rep { color: #22c55e; font-weight: 500; }
+
+#voice-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-text-secondary); cursor: pointer; margin-top: 8px; }
+#voice-check { width: 16px; height: 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <h1>SmartRehab</h1>
+    <div>
+      <span id="status-dot"></span>
+      <span id="status-text">camera off</span>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="video-card">
+      <div id="video-wrap">
+        <video id="vid" playsinline autoplay muted></video>
+        <canvas id="overlay"></canvas>
+        <div id="hud">
+          <div id="hud-reps">0</div>
+          <div id="hud-label">reps</div>
+          <div id="hud-angle">angle: —</div>
+          <div id="hud-phase" style="color:#aaa">waiting...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sidebar">
+      <div class="card">
+        <div class="card-title">exercise</div>
+        <select id="exercise-select">
+          <option value="bicep_curl">Bicep curl</option>
+          <option value="triceps_ext">Triceps overhead extension</option>
+          <option value="squat">Squat</option>
+          <option value="shoulder_raise">Shoulder raise</option>
+          <option value="pushup">Push-up</option>
+        </select>
+
+        <div id="angle-bar-wrap" style="margin-top:12px;">
+          <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:4px;">live joint angle</div>
+          <div id="angle-bar-bg"><div id="angle-bar"></div></div>
+          <div class="bar-labels"><span>0°</span><span>90°</span><span>180°</span></div>
+        </div>
+
+        <div id="demo-wrap" style="margin-top:12px;">
+          <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:4px;">how to do it (demo)</div>
+          <canvas id="demo" width="240" height="190" style="width:100%; border-radius:8px; background:var(--color-background-secondary);"></canvas>
+          <ul id="demo-tips" style="font-size:12px; color:var(--color-text-secondary); margin:6px 0 0 16px;"></ul>
+          <div style="font-size:11px; color:var(--color-text-secondary); margin-top:4px;">Reference only. The doctor confirms the final criteria.</div>
+        </div>
+
+        <label id="voice-toggle">
+          <input type="checkbox" id="voice-check" checked>
+          voice coaching
+        </label>
+
+        <button id="btn-start" style="margin-top:14px;">start camera</button>
+        <button id="btn-reset">reset reps</button>
+      </div>
+
+      <!-- NEW: data collection card -->
+      <div class="card">
+        <div class="card-title">data collection</div>
+        <input id="person-id" type="text" placeholder="person name (e.g. omar)">
+        <select id="label-select">
+          <option value="good">Good form</option>
+          <option value="bad_shallow">Bad: not deep enough</option>
+          <option value="bad_fast">Bad: too fast</option>
+          <option value="bad_no_extend">Bad: not fully extended</option>
+          <option value="bad_swing">Bad: swinging torso</option>
+          <option value="bad_elbow">Bad: elbow drifting</option>
+        </select>
+        <div class="stat-row"><span class="stat-label">reps recorded</span><span class="stat-value" id="stat-recorded">0</span></div>
+        <button id="btn-save">save data (CSV)</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">session stats</div>
+        <div class="stat-row"><span class="stat-label">total reps</span><span class="stat-value" id="stat-reps">0</span></div>
+        <div class="stat-row"><span class="stat-label">duration</span><span class="stat-value" id="stat-time">0:00</span></div>
+        <div class="stat-row"><span class="stat-label">reps/min</span><span class="stat-value" id="stat-rpm">—</span></div>
+        <div class="stat-row"><span class="stat-label">pose detected</span><span class="stat-value" id="stat-pose">no</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">activity log</div>
+        <div id="log"><div class="log-entry">Session not started.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// MediaPipe Landmark Maps: Left=[11,13,15], Right=[12,14,16] etc.
+const EXERCISES = {
+  // low/high are LOOSE counting thresholds so shallow / short reps are still recorded.
+  // Quality is judged later from min_angle / max_angle, NOT from these two numbers.
+  bicep_curl:     { name: "Bicep curl",     left: [11,13,15], right: [12,14,16], low: 100, high: 130, desc: "elbow angle",
+                    demo: { up: false, lo: 35, hi: 165, tips: ["Stand side-on to the camera", "Keep the elbow by your side", "Do not swing your torso", "Lift ~2 s, lower ~2 s", "Fully straighten at the bottom"] } },
+  triceps_ext:    { name: "Triceps overhead extension", left: [11,13,15], right: [12,14,16], low: 115, high: 140, desc: "elbow angle",
+                    demo: { up: true, lo: 70, hi: 170, tips: ["Stand side-on to the camera", "Upper arm stays still, close to your head", "Only the forearm moves", "Extend fully, lower ~2 s", "Keep your torso still"] } },
+  squat:          { name: "Squat",          left: [23,25,27], right: [24,26,28], low: 90,  high: 160, desc: "knee angle"  },
+  shoulder_raise: { name: "Shoulder raise", left: [13,11,23], right: [14,12,24], low: 30,  high: 100, desc: "shoulder angle" },
+  pushup:         { name: "Push-up",         left: [11,13,15], right: [12,14,16], low: 70,  high: 150, desc: "elbow angle" },
+};
+
+let reps = 0, atBottom = false, smoothed = null;
+let started = false, startTime = null;
+let lastEncourage = 0;
+let voiceOn = true;
+let currentAngle = 0;
+let poseActive = false;
+
+// NEW: data collection variables
+let repBuf = [];   // angle frames of the rep currently in progress
+let dataset = [];
+let ring = [];      // last 0.4 s of frames (lead-in before a rep)
+let finishAt = 0, finishRep = 0;  // keep recording 0.3 s after a rep ends  // one entry per finished rep
+
+const vid = document.getElementById('vid');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+
+function getExercise() { return EXERCISES[document.getElementById('exercise-select').value]; }
+
+function speak(msg, minGap = 4000) {
+  if (!voiceOn) return;
+  const now = Date.now();
+  if ((speak._last||{})[msg] && now - speak._last[msg] < minGap) return;
+  speak._last = speak._last || {};
+  speak._last[msg] = now;
+  const u = new SpeechSynthesisUtterance(msg);
+  u.rate = 1.0; u.volume = 0.9;
+  speechSynthesis.speak(u);
+}
+
+function addLog(msg, cls='') {
+  const log = document.getElementById('log');
+  const d = document.createElement('div');
+  d.className = 'log-entry ' + cls;
+  const t = new Date(); const ts = t.getHours()+':'+String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+  d.textContent = ts + '  ' + msg;
+  log.prepend(d);
+}
+
+// Calculate angle using 2D (X, Y) space only
+function angle2D(lm, joints) {
+  const [a, b, c] = joints;
+  const ax = lm[a].x - lm[b].x, ay = lm[a].y - lm[b].y;
+  const cx = lm[c].x - lm[b].x, cy = lm[c].y - lm[b].y;
+
+  const dot = ax*cx + ay*cy;
+  const ma = Math.sqrt(ax*ax + ay*ay), mc = Math.sqrt(cx*cx + cy*cy);
+  return Math.round(Math.acos(Math.max(-1, Math.min(1, dot / (ma * mc + 1e-8)))) * 180 / Math.PI);
+}
+
+// NEW: save one finished rep (its angle curve + a few summary numbers)
+function recordRep(repNo) {
+  if (repBuf.length < 5) return; // too short to be a real rep
+  const t0 = repBuf[0].t;
+  const col = k => repBuf.map(f => f[k]);
+  const r1 = x => Math.round(x * 10) / 10, r3 = x => Math.round(x * 1000) / 1000;
+  const angles = col('a').map(r1), ed = col('ed').map(r3), tl = col('tl').map(r1);
+  const times = col('t').map(t => Math.round(t - t0));
+  const range = arr => Math.max(...arr) - Math.min(...arr);
+  dataset.push({
+    person:      (document.getElementById('person-id').value.trim() || 'unknown').replace(/[,;\s]+/g, '_'),
+    exercise:    document.getElementById('exercise-select').value,
+    label:       document.getElementById('label-select').value,
+    rep:         repNo,
+    duration_ms: times[times.length - 1],
+    min_angle:   Math.min(...angles),
+    max_angle:   Math.max(...angles),
+    elbow_drift: r3(range(ed)),   // how much the elbow moved sideways (relative to torso length)
+    torso_swing: r1(range(tl)),   // how much the torso leaned (degrees)
+    angles:      angles.join(';'),
+    elbow_x:     ed.join(';'),
+    torso_lean:  tl.join(';'),
+    times:       times.join(';')
+  });
+  document.getElementById('stat-recorded').textContent = dataset.length;
+}
+
+// NEW: download everything recorded so far as a CSV file
+function saveCSV() {
+  if (!dataset.length) { addLog('Nothing to save yet - do some reps first'); return; }
+  const cols = Object.keys(dataset[0]);
+  const lines = [cols.join(',')].concat(dataset.map(r => cols.map(c => r[c]).join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'rehab_data_' + Date.now() + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  addLog('Saved ' + dataset.length + ' reps to CSV');
+}
+
+function updateRep(angleDeg, extra) {
+  const ex = getExercise();
+  const alpha = 0.35; // Slightly faster reaction tracking
+  smoothed = smoothed === null ? angleDeg : alpha * angleDeg + (1 - alpha) * smoothed;
+  currentAngle = Math.round(smoothed);
+
+  document.getElementById('hud-angle').textContent = 'angle: ' + currentAngle + '°  (' + ex.desc + ')';
+  document.getElementById('angle-bar').style.width = Math.min(100, (currentAngle / 180) * 100) + '%';
+
+  const now = performance.now();
+  const fr = { t: now, a: smoothed, ed: extra.ed, tl: extra.tl };
+  ring.push(fr);
+  while (ring.length > 1 && now - ring[0].t > 400) ring.shift();
+
+  // a rep just ended: keep recording 0.3 s more (captures the true extension), then save it
+  if (finishAt) {
+    repBuf.push(fr);
+    if (now >= finishAt) { recordRep(finishRep); finishAt = 0; repBuf = []; }
+    return;
+  }
+
+  // at the top: start fresh, but keep the last 0.4 s as lead-in
+  if (!atBottom && smoothed >= ex.high) repBuf = ring.slice();
+  else repBuf.push(fr);
+  if (repBuf.length > 900) repBuf.shift();
+
+  if (!atBottom && smoothed <= ex.low) {
+    atBottom = true;
+    document.getElementById('hud-phase').style.color = '#f97316';
+    document.getElementById('hud-phase').textContent = '▼ going down';
+  }
+  if (atBottom && smoothed >= ex.high) {
+    atBottom = false;
+    reps++;
+    finishAt = now + 300; finishRep = reps;   // recordRep() runs after the extra 0.3 s
+    document.getElementById('hud-reps').textContent = reps;
+    document.getElementById('hud-phase').style.color = '#22c55e';
+    document.getElementById('hud-phase').textContent = '✓ rep ' + reps + '!';
+    document.getElementById('stat-reps').textContent = reps;
+    addLog('Rep ' + reps + ' — ' + ex.name, 'rep');
+    speak('Good! Rep ' + reps, 1500);
+    if (reps % 5 === 0) speak('Amazing! ' + reps + ' reps done!', 0);
+    setTimeout(() => {
+      if (atBottom) return;
+      document.getElementById('hud-phase').style.color = '#aaa';
+      document.getElementById('hud-phase').textContent = '▲ going up';
+    }, 600);
+  }
+}
+
+function drawSkeleton(lm, activeJoints) {
+  const W = overlay.width, H = overlay.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const connections = [
+    [11,12],[11,23],[12,24],[23,24],
+    [11,13],[13,15],[12,14],[14,16],
+    [23,25],[25,27],[24,26],[26,28],
+    [27,29],[28,30],[29,31],[30,32]
+  ];
+
+  ctx.strokeStyle = 'rgba(74, 222, 128, 0.4)'; ctx.lineWidth = 2;
+  connections.forEach(([a,b]) => {
+    if (lm[a] && lm[b] && lm[a].visibility > 0.5 && lm[b].visibility > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(lm[a].x * W, lm[a].y * H);
+      ctx.lineTo(lm[b].x * W, lm[b].y * H);
+      ctx.stroke();
+    }
+  });
+
+  // Highlight the specific arm or leg actively being used for analysis
+  ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(lm[activeJoints[0]].x * W, lm[activeJoints[0]].y * H);
+  ctx.lineTo(lm[activeJoints[1]].x * W, lm[activeJoints[1]].y * H);
+  ctx.lineTo(lm[activeJoints[2]].x * W, lm[activeJoints[2]].y * H);
+  ctx.stroke();
+
+  lm.forEach((p, i) => {
+    if (p.visibility > 0.5) {
+      const isKey = activeJoints.includes(i);
+      ctx.beginPath();
+      ctx.arc(p.x * W, p.y * H, isKey ? 7 : 4, 0, 2*Math.PI);
+      ctx.fillStyle = isKey ? '#f97316' : '#22c55e';
+      ctx.fill();
+    }
+  });
+}
+
+function updateStats() {
+  if (!startTime) return;
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const m = Math.floor(elapsed / 60), s = elapsed % 60;
+  document.getElementById('stat-time').textContent = m + ':' + String(s).padStart(2,'0');
+  const rpm = elapsed > 10 ? Math.round(reps / (elapsed / 60)) : '—';
+  document.getElementById('stat-rpm').textContent = rpm;
+
+  const now = Date.now();
+  if (reps > 0 && now - lastEncourage > 12000) {
+    lastEncourage = now;
+    const msgs = ['Keep going!', 'You are doing great!', 'Stay strong!', 'Looking good!'];
+    speak(msgs[Math.floor(Math.random()*msgs.length)], 0);
+  }
+}
+
+// elbow drift + torso lean, measured on the same side as the tracked arm
+let lastExtra = { ed: 0, tl: 0 };
+function bodyExtras(lm, right) {
+  const sh = lm[right ? 12 : 11], el = lm[right ? 14 : 13], hp = lm[right ? 24 : 23];
+  if (sh.visibility > 0.5 && el.visibility > 0.5 && hp.visibility > 0.5) {
+    const torso = Math.hypot(sh.x - hp.x, sh.y - hp.y) + 1e-6;
+    lastExtra = { ed: (el.x - sh.x) / torso,                                   // elbow sideways offset / torso length
+                  tl: Math.atan2(sh.x - hp.x, hp.y - sh.y) * 180 / Math.PI };  // 0 = upright
+  }
+  return lastExtra;
+}
+
+// demo: animated stick figure (side view), 2 s up + 2 s down
+const demoCv = document.getElementById('demo'), dg = demoCv.getContext('2d');
+function setDemoTips() {
+  const d = getExercise().demo;
+  document.getElementById('demo-tips').innerHTML = d ? d.tips.map(t => '<li>' + t + '</li>').join('') : '<li>No demo for this exercise yet</li>';
+}
+function drawDemo(ts) {
+  const d = getExercise().demo;
+  dg.clearRect(0, 0, demoCv.width, demoCv.height);
+  if (d) {
+    const k = (1 - Math.cos(ts / 2000 * Math.PI)) / 2;                // 0 -> 1 -> 0
+    const th = (d.hi - (d.hi - d.lo) * k) * Math.PI / 180;            // elbow angle
+    const S = [104, 70], E = [S[0], S[1] + (d.up ? -40 : 40)];        // upper arm: hanging (curl) or overhead (triceps)
+    const W = [E[0] + 36 * (d.up ? -Math.sin(th) : Math.sin(th)), E[1] + 36 * (d.up ? Math.cos(th) : -Math.cos(th))];
+    const line = (p, q, c) => { dg.strokeStyle = c; dg.lineWidth = 5; dg.lineCap = 'round'; dg.beginPath(); dg.moveTo(p[0], p[1]); dg.lineTo(q[0], q[1]); dg.stroke(); };
+    dg.strokeStyle = '#8a8f98'; dg.lineWidth = 3; dg.beginPath(); dg.arc(98, 48, 11, 0, 7); dg.stroke();
+    line([100, 62], [100, 130], '#8a8f98'); line([100, 130], [100, 178], '#8a8f98');
+    line(S, E, '#f97316'); line(E, W, '#22c55e');
+    dg.fillStyle = '#7cf'; dg.font = '12px sans-serif';
+    dg.fillText(Math.round(th * 180 / Math.PI) + '°', 130, E[1] + 4);
+  }
+  requestAnimationFrame(drawDemo);
+}
+setDemoTips(); requestAnimationFrame(drawDemo);
+window.addEventListener('beforeunload', e => { if (dataset.length) e.preventDefault(); });
+
+let pose;
+async function startCamera() {
+  document.getElementById('btn-start').textContent = 'loading...';
+  document.getElementById('btn-start').disabled = true;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    vid.srcObject = stream;
+    await new Promise(r => vid.onloadedmetadata = r);
+    vid.play();
+
+    overlay.width = vid.videoWidth || 640;
+    overlay.height = vid.videoHeight || 480;
+
+    pose = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+
+    pose.onResults(results => {
+      const lm = results.poseLandmarks;
+      poseActive = !!lm;
+      document.getElementById('stat-pose').textContent = lm ? 'yes' : 'no';
+      document.getElementById('stat-pose').style.color = lm ? '#22c55e' : 'var(--color-text-secondary)';
+
+      if (lm) {
+        const ex = getExercise();
+
+        // DYNAMIC SIDE DETECTION: Pick the side with better visibility or presence
+        let chosenJoints = ex.left;
+        const leftVisibility = lm[ex.left[0]].visibility + lm[ex.left[1]].visibility + lm[ex.left[2]].visibility;
+        const rightVisibility = lm[ex.right[0]].visibility + lm[ex.right[1]].visibility + lm[ex.right[2]].visibility;
+
+        if (rightVisibility > leftVisibility) {
+          chosenJoints = ex.right;
+        }
+
+        drawSkeleton(lm, chosenJoints);
+
+        const [a, b, c] = chosenJoints;
+        if (lm[a].visibility > 0.5 && lm[b].visibility > 0.5 && lm[c].visibility > 0.5) {
+          const ang = angle2D(lm, chosenJoints);
+          updateRep(ang, bodyExtras(lm, chosenJoints === ex.right));
+        }
+      } else {
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+      }
+      updateStats();
+    });
+
+    const camera = new Camera(vid, {
+      onFrame: async () => { await pose.send({ image: vid }); },
+      width: 640, height: 480
+    });
+    camera.start();
+
+    startTime = Date.now();
+    started = true;
+    document.getElementById('status-dot').style.background = '#22c55e';
+    document.getElementById('status-text').textContent = 'camera live';
+    document.getElementById('btn-start').textContent = 'camera running';
+    addLog('Session started — ' + getExercise().name);
+    speak('Session started. Begin when ready.', 0);
+
+    setInterval(() => {
+      overlay.width = vid.videoWidth || overlay.width;
+      overlay.height = vid.videoHeight || overlay.height;
+    }, 2000);
+
+  } catch(e) {
+    document.getElementById('status-text').textContent = 'camera error';
+    document.getElementById('btn-start').textContent = 'retry';
+    document.getElementById('btn-start').disabled = false;
+    addLog('Error: ' + e.message);
+  }
+}
+
+document.getElementById('btn-start').onclick = () => {
+  if (!document.getElementById('person-id').value.trim()) addLog('Tip: type your name first');
+  if (!started) startCamera();
+};
+document.getElementById('btn-reset').onclick = () => {
+  reps = 0; atBottom = false; smoothed = null; startTime = Date.now(); lastEncourage = 0;
+  repBuf = []; finishAt = 0; ring = [];
+  document.getElementById('hud-reps').textContent = '0';
+  document.getElementById('hud-phase').textContent = 'waiting...';
+  document.getElementById('hud-phase').style.color = '#aaa';
+  document.getElementById('stat-reps').textContent = '0';
+  addLog('Counter reset (recorded data is kept)');
+};
+document.getElementById('btn-save').onclick = saveCSV;
+document.getElementById('voice-check').onchange = e => {
+  voiceOn = e.target.checked;
+  if (voiceOn) speak('Voice coaching on', 0);
+};
+document.getElementById('exercise-select').onchange = () => {
+  smoothed = null; atBottom = false; repBuf = []; finishAt = 0; ring = [];
+  addLog('Exercise changed to ' + getExercise().name); setDemoTips();
+  speak(getExercise().name, 0);
+};
+</script>
+
+</body>
+</html>
